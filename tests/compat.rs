@@ -6,7 +6,10 @@ fn bin() -> Command {
 }
 
 fn fixture() -> &'static Path {
-    Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/small.bam"))
+    Path::new(concat!(
+        env!("CARGO_MANIFEST_DIR"),
+        "/tests/golden/small.bam"
+    ))
 }
 
 fn samtools_available() -> bool {
