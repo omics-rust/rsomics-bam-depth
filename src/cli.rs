@@ -53,7 +53,9 @@ impl Cli {
             Box::new(std::fs::File::create(&self.output).map_err(rsomics_common::RsomicsError::Io)?)
         };
 
-        let lines = compute_depth(&self.input, &mut out, &opts)?;
+        let workers = std::num::NonZero::new(self.common.thread_count())
+            .unwrap_or(std::num::NonZero::<usize>::MIN);
+        let lines = compute_depth(&self.input, &mut out, &opts, workers)?;
 
         if self.common.json {
             let j = serde_json::json!({ "lines": lines });

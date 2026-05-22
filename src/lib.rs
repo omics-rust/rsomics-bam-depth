@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 use std::io::{BufWriter, Write};
+use std::num::NonZero;
 use std::path::Path;
 
 use noodles::bam;
@@ -44,8 +45,13 @@ fn start(r: &bam::Record) -> Option<usize> {
 /// and clips do not touch the reference. Coverage is accumulated as
 /// (start,+1)/(end,-1) interval events per contiguous aligned run, then swept
 /// once per chromosome — O(runs·log runs) instead of O(covered bases).
-pub fn compute_depth(input: &Path, output: &mut dyn Write, opts: &DepthOpts) -> Result<u64> {
-    let mut reader = rsomics_bamio::open_parallel(input)?;
+pub fn compute_depth(
+    input: &Path,
+    output: &mut dyn Write,
+    opts: &DepthOpts,
+    workers: NonZero<usize>,
+) -> Result<u64> {
+    let mut reader = rsomics_bamio::open_with_workers(input, workers)?;
     let header = reader.read_header().map_err(RsomicsError::Io)?;
     let ref_names: Vec<String> = header
         .reference_sequences()
