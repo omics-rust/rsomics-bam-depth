@@ -102,8 +102,14 @@ pub fn compute_depth(
     let mut tids: Vec<usize> = events.keys().copied().collect();
     tids.sort_unstable();
 
+    // Per-position output is the hot loop (one line per covered base); itoa +
+    // a reused byte buffer avoids the per-position format!/Display overhead.
+    let mut line: Vec<u8> = Vec::with_capacity(64);
+    let mut ib = itoa::Buffer::new();
+
     for t in tids {
         let name = ref_names.get(t).map_or("*", |n| n.as_str());
+        let name_b = name.as_bytes();
         let evs = events.get_mut(&t).unwrap();
         evs.sort_unstable();
 
@@ -122,8 +128,16 @@ pub fn compute_depth(
                 } else {
                     depth
                 };
+                let rep = itoa::Buffer::new().format(reported).as_bytes().to_vec();
                 for pos in p..until {
-                    writeln!(out, "{name}\t{pos}\t{reported}").map_err(RsomicsError::Io)?;
+                    line.clear();
+                    line.extend_from_slice(name_b);
+                    line.push(b'\t');
+                    line.extend_from_slice(ib.format(pos).as_bytes());
+                    line.push(b'\t');
+                    line.extend_from_slice(&rep);
+                    line.push(b'\n');
+                    out.write_all(&line).map_err(RsomicsError::Io)?;
                     lines += 1;
                 }
             }

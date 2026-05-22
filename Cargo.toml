@@ -13,6 +13,7 @@ name = "rsomics-bam-depth"
 path = "src/main.rs"
 
 [dependencies]
+itoa = "1"
 rsomics-common = { version = "0.6" }
 rsomics-help = { version = "0.3" }
 rsomics-bamio = { version = "0.1" }
