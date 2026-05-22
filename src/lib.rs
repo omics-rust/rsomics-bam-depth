@@ -1,7 +1,6 @@
 #![allow(clippy::cast_precision_loss)]
 
 use std::collections::HashMap;
-use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::path::Path;
 
@@ -46,10 +45,7 @@ fn start(r: &bam::Record) -> Option<usize> {
 /// (start,+1)/(end,-1) interval events per contiguous aligned run, then swept
 /// once per chromosome — O(runs·log runs) instead of O(covered bases).
 pub fn compute_depth(input: &Path, output: &mut dyn Write, opts: &DepthOpts) -> Result<u64> {
-    let mut reader = File::open(input)
-        .map(bam::io::Reader::new)
-        .map_err(|e| RsomicsError::InvalidInput(format!("{}: {e}", input.display())))?;
-
+    let mut reader = rsomics_bamio::open_parallel(input)?;
     let header = reader.read_header().map_err(RsomicsError::Io)?;
     let ref_names: Vec<String> = header
         .reference_sequences()
