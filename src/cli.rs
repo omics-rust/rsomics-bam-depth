@@ -31,8 +31,8 @@ pub struct Cli {
     #[arg(long = "min-mapq", default_value_t = 0)]
     min_mapq: u8,
 
-    /// Maximum depth to report per position.
-    #[arg(long = "max-depth", default_value_t = 8000)]
+    /// Cap reported depth at this value (0 = no cap, like `samtools depth -d 0`).
+    #[arg(long = "max-depth", default_value_t = 0)]
     max_depth: u32,
 
     #[command(flatten)]
