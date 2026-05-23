@@ -1,3 +1,21 @@
+//! `samtools depth` port over the `rsomics-bamio` raw-record read path.
+//!
+//! depth only needs each read's refID, start, and reference span (plus MAPQ for
+//! the `-Q` filter and the FLAG for the default read filter). It never needs the
+//! decoded seq/qual/cigar as noodles types, so iterating `bam::Record` — which
+//! fully decodes and clones every record — is pure waste on the hot loop. Each
+//! record is read as a raw payload via [`rsomics_bamio::raw`] and its fields are
+//! read at fixed offsets; the packed CIGAR is summed in place for the reference
+//! span. No decode/clone per record.
+//!
+//! Per-base coverage matches `samtools depth` (bam_plcmd.c): each read
+//! contributes +1 to every reference position its aligned bases (CIGAR M/=/X)
+//! cover; deletions and reference skips (D/N) advance the reference cursor
+//! without contributing; inserts and clips do not touch the reference. Coverage
+//! is accumulated as (start,+1)/(end,-1) interval events per contiguous aligned
+//! run, then swept once per chromosome — O(runs·log runs) rather than
+//! O(covered bases).
+
 #![allow(clippy::cast_precision_loss)]
 
 use std::collections::HashMap;
@@ -5,9 +23,15 @@ use std::io::{BufWriter, Write};
 use std::num::NonZero;
 use std::path::Path;
 
-use noodles::bam;
-use noodles::sam::alignment::record::cigar::op::Kind;
+use rsomics_bamio::raw::{self, RawRecord};
 use rsomics_common::{Result, RsomicsError};
+
+// CIGAR op codes (BAM packed encoding, low nibble): M=0 I=1 D=2 N=3 S=4 H=5 P=6 ==7 X=8.
+const CIGAR_MATCH: u8 = 0;
+const CIGAR_DELETION: u8 = 2;
+const CIGAR_SKIP: u8 = 3;
+const CIGAR_SEQ_MATCH: u8 = 7;
+const CIGAR_SEQ_MISMATCH: u8 = 8;
 
 #[derive(Debug, Clone)]
 pub struct DepthOpts {
@@ -27,24 +51,6 @@ impl Default for DepthOpts {
     }
 }
 
-fn tid(r: &bam::Record) -> Option<usize> {
-    r.reference_sequence_id().transpose().ok().flatten()
-}
-
-fn start(r: &bam::Record) -> Option<usize> {
-    r.alignment_start()
-        .transpose()
-        .ok()
-        .flatten()
-        .map(|p| p.get())
-}
-
-/// Per-base coverage like `samtools depth`: each read contributes +1 to every
-/// reference position its aligned bases (CIGAR M/=/X) cover. Deletions and
-/// reference skips advance the reference cursor without contributing; inserts
-/// and clips do not touch the reference. Coverage is accumulated as
-/// (start,+1)/(end,-1) interval events per contiguous aligned run, then swept
-/// once per chromosome — O(runs·log runs) instead of O(covered bases).
 pub fn compute_depth(
     input: &Path,
     output: &mut dyn Write,
@@ -60,35 +66,37 @@ pub fn compute_depth(
         .collect();
 
     let mut events: HashMap<usize, Vec<(usize, i64)>> = HashMap::new();
+    let mut record = RawRecord::default();
 
-    for result in reader.records() {
-        let record = result.map_err(RsomicsError::Io)?;
-        let flags = record.flags();
-
-        if (flags.bits() & opts.skip_flags) != 0 {
+    while raw::read_record(reader.get_mut(), &mut record)? != 0 {
+        if (record.flags() & opts.skip_flags) != 0 {
+            continue;
+        }
+        if record.mapping_quality() < opts.min_mapq {
             continue;
         }
 
-        let mq = record.mapping_quality().map_or(0, |q| q.get());
-        if mq < opts.min_mapq {
+        let tid = record.reference_sequence_id();
+        let pos0 = record.alignment_start();
+        if tid < 0 || pos0 < 0 {
             continue;
         }
-
-        let Some(t) = tid(&record) else { continue };
-        let Some(s) = start(&record) else { continue };
+        let t = tid as usize;
+        // noodles' `alignment_start` is 1-based; the raw field is 0-based. depth's
+        // output column is 1-based, so the run starts at the 0-based pos + 1.
+        let start = pos0 as usize + 1;
 
         let chrom_events = events.entry(t).or_default();
-        let mut ref_pos = s;
-        for op in record.cigar().iter() {
-            let op = op.map_err(RsomicsError::Io)?;
-            let len = op.len();
-            match op.kind() {
-                Kind::Match | Kind::SequenceMatch | Kind::SequenceMismatch => {
+        let mut ref_pos = start;
+        for (kind, len) in record.cigar_ops() {
+            let len = len as usize;
+            match kind {
+                CIGAR_MATCH | CIGAR_SEQ_MATCH | CIGAR_SEQ_MISMATCH => {
                     chrom_events.push((ref_pos, 1));
                     chrom_events.push((ref_pos + len, -1));
                     ref_pos += len;
                 }
-                Kind::Deletion | Kind::Skip => {
+                CIGAR_DELETION | CIGAR_SKIP => {
                     ref_pos += len;
                 }
                 _ => {}
