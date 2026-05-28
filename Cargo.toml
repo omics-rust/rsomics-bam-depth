@@ -12,6 +12,11 @@ description = "Per-base or per-region depth from BAM — Rust port of samtools d
 name = "rsomics-bam-depth"
 path = "src/main.rs"
 
+
+[lib]
+name = "rsomics_bam_depth"
+path = "src/lib.rs"
+doctest = false
 [dependencies]
 itoa = "1"
 rsomics-common = { version = "0.6" }
